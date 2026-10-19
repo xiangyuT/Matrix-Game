@@ -73,6 +73,23 @@ comparisons. For bitwise rollout comparisons, enable Torch deterministic
 algorithms on both sides; ordinary XPU execution can have BF16 run-to-run
 variation that propagates through the rollout.
 
+## Fixed-sink KV dataflow
+
+For no-grad XPU inference with a full contiguous fixed-sink window, attention
+reads the existing K/V storage directly. Only the sink K is saved, temporarily
+replaced with its fixed-position RoPE value, then restored after the reader,
+including on reader exceptions. Cache rolling, final K/V and metadata, clean-KV
+commits and attention arithmetic are unchanged. This removes full-window K/V
+concatenations; it does not quantize the cache or drop history.
+
+The route is enabled by default. Set `MATRIX_XPU_KV_SINK_OVERLAY=0` before
+inference to retain the original concatenation for comparisons. Incomplete or
+noncontiguous windows, nonadjacent slices, autograd and memory/context prefixes
+retain the original route. CUDA is unchanged. Use
+`matrix_game.inference.xpu.kv_backend_status()` to inspect actual overlay and
+fallback calls. A session owns its KV cache; concurrent readers must not share
+that mutable cache across streams.
+
 ## Optional SYCL-TLA attention
 
 The XPU runtime can use a separately built SYCL-TLA/CUTE sidecar. It keeps native
@@ -132,3 +149,32 @@ The device cases cover actual 405-query attention with 405/512/8505-key inputs,
 FP64-reference RoPE at early/window/long-session positions, and scheduler output.
 They do not replace real scene generation, cache-rollover, stop/restart, media
 decoding or browser checks in [validation](testing.md).
+
+## Reproduce KV validation and throughput
+
+After verifying the selected XPU is idle, use a recorded clean RGB NumPy array
+(`uint8 [frames,H,W,3]`) and the normal resource tree. The default test consumes
+161 frames: 25 warmup chunks and 16 measured chunks, retaining the original
+first-one/then-four-frame cadence. Configure the optional TLA library above to
+compare KV routes with TLA held fixed, or force `MATRIX_XPU_ATTENTION=sdpa`.
+
+```bash
+python scripts/benchmark_xpu.py --scene ancient-egypt --preset xpu \
+  --resources /path/to/resources --reference /path/to/reference.npy \
+  --action validate --output /path/to/new-validation
+python scripts/benchmark_xpu.py --scene ancient-egypt --preset xpu \
+  --resources /path/to/resources --reference /path/to/reference.npy \
+  --action benchmark --output /path/to/new-benchmark
+```
+
+Validation compares every latent, control, decoded RGB chunk and all final KV
+fields with the sink overlay disabled/enabled. Benchmark runs three fresh
+streams in each baseline-before/candidate/baseline-after block, excludes the
+first 25 chunks of each stream, and records raw timings and dispatch counters.
+These are development measurements with cached text, not browser latency or
+formal release acceptance. `--action profile` exports a two-chunk resident trace
+after warmup and profiler priming. `--action all` runs all three phases with one
+resident model and separate phase subdirectories. Outputs must use a new directory.
+
+See [recorded development measurements](xpu-performance.md) for the tested
+configuration, comparison boundaries and raw per-sample throughput table.

@@ -336,6 +336,7 @@ class CausalWanSelfAttention(nn.Module):
                     block_mask=block_mask
                 )[:, :, :q.shape[1]].transpose(2, 1)  # 原写 :-padded_length，序列长恰为 128 倍数时 padded_length=0、:-0 切成空（704x1280 时 40x880=35200 踩到）
         else:
+            sink_output = None
             frame_seqlen = math.prod(grid_sizes[0][1:]).item()
             current_start_frame = current_start // frame_seqlen
             # 上下文模式下全局帧号整体加 rope_offset；换上下文重算缓存时由 rope_start_frame 显式给真实帧号。两者缺省时与原实现相同
@@ -399,8 +400,15 @@ class CausalWanSelfAttention(nn.Module):
                 sink_grid[:, 0] = self.sink_size
                 sink_pos = torch.arange(self.sink_size, dtype=torch.long) + (rope_frame - W_att)
                 k_sink = rope_apply_frames(kv_cache["k_sink_raw"][:, :sink_tokens], sink_grid, freqs, sink_pos).type_as(v)
-                k_att = torch.cat([k_sink, kv_cache["k"][:, recent_start:local_end_index]], dim=1)
-                v_att = torch.cat([kv_cache["v"][:, :sink_tokens], kv_cache["v"][:, recent_start:local_end_index]], dim=1)
+                if q.device.type == "xpu":
+                    from matrix_game.inference.xpu.kv import try_sink_attention
+                    sink_output = try_sink_attention(
+                        attention, roped_query, k_sink, kv_cache, sink_tokens,
+                        recent_start, local_end_index,
+                        simple=kv_mem is None and ctx_cache is None)
+                if sink_output is None:
+                    k_att = torch.cat([k_sink, kv_cache["k"][:, recent_start:local_end_index]], dim=1)
+                    v_att = torch.cat([kv_cache["v"][:, :sink_tokens], kv_cache["v"][:, recent_start:local_end_index]], dim=1)
             elif self.local_attn_size != -1 and sink_tokens > 0 and recent_start > sink_tokens:
                 # 缓存容量大于 local_attn_size 时（DMD 长展开的带梯度窗口，见 pipeline/lowpoly_rollout.py
                 # 的 _grow_cache），可见集合显式取「sink 加最近 local_attn_size-sink_size 帧」，与容量等于窗口的滚动缓存
@@ -410,22 +418,25 @@ class CausalWanSelfAttention(nn.Module):
             else:
                 k_att = kv_cache["k"][:, max(0, local_end_index - max_attention_size):local_end_index]
                 v_att = kv_cache["v"][:, max(0, local_end_index - max_attention_size):local_end_index]
-            if kv_mem is not None and int(kv_mem["n"]) > 0:
-                # 记忆槽（WorldKV 式，免解码）。第 r 个记忆潜变量（r=0 最旧）在 p-W-(m-r) 现加 RoPE，
-                # 拼成 [记忆 | sink | 窗口]，只进 K/V
-                assert W_att != -1, "记忆槽要配有界缓存（local_attn_size != -1）"
-                m_mem = int(kv_mem["n"])
-                mem_grid = grid_sizes.clone()
-                mem_grid[:, 0] = m_mem
-                mem_pos = torch.arange(m_mem, dtype=torch.long) + (rope_frame - W_att - m_mem)
-                k_mem = rope_apply_frames(kv_mem["k"][:, :m_mem * frame_seqlen], mem_grid, freqs, mem_pos).type_as(v)
-                k_att = torch.cat([k_mem, k_att], dim=1)
-                v_att = torch.cat([kv_mem["v"][:, :m_mem * frame_seqlen].to(v_att.dtype), v_att], dim=1)
-            if ctx_cache is not None and ctx_cache.get("k") is not None and ctx_cache["k"].shape[1] > 0:
-                # 当前帧 query 看 [上下文槽 | sink | 窗口]；上下文槽独立存放，不受滚动淘汰影响
-                k_att = torch.cat([ctx_cache["k"].to(k_att.dtype), k_att], dim=1)
-                v_att = torch.cat([ctx_cache["v"].to(v_att.dtype), v_att], dim=1)
-            x = attention(roped_query, k_att, v_att)
+            if sink_output is None:
+                if kv_mem is not None and int(kv_mem["n"]) > 0:
+                    # 记忆槽（WorldKV 式，免解码）。第 r 个记忆潜变量（r=0 最旧）在 p-W-(m-r) 现加 RoPE，
+                    # 拼成 [记忆 | sink | 窗口]，只进 K/V
+                    assert W_att != -1, "记忆槽要配有界缓存（local_attn_size != -1）"
+                    m_mem = int(kv_mem["n"])
+                    mem_grid = grid_sizes.clone()
+                    mem_grid[:, 0] = m_mem
+                    mem_pos = torch.arange(m_mem, dtype=torch.long) + (rope_frame - W_att - m_mem)
+                    k_mem = rope_apply_frames(kv_mem["k"][:, :m_mem * frame_seqlen], mem_grid, freqs, mem_pos).type_as(v)
+                    k_att = torch.cat([k_mem, k_att], dim=1)
+                    v_att = torch.cat([kv_mem["v"][:, :m_mem * frame_seqlen].to(v_att.dtype), v_att], dim=1)
+                if ctx_cache is not None and ctx_cache.get("k") is not None and ctx_cache["k"].shape[1] > 0:
+                    # 当前帧 query 看 [上下文槽 | sink | 窗口]；上下文槽独立存放，不受滚动淘汰影响
+                    k_att = torch.cat([ctx_cache["k"].to(k_att.dtype), k_att], dim=1)
+                    v_att = torch.cat([ctx_cache["v"].to(v_att.dtype), v_att], dim=1)
+                x = attention(roped_query, k_att, v_att)
+            else:
+                x = sink_output
             kv_cache["global_end_index"].fill_(current_end)
             kv_cache["local_end_index"].fill_(local_end_index)
 
