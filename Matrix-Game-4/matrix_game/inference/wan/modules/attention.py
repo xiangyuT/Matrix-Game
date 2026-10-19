@@ -168,6 +168,14 @@ def attention(
             version=fa_version,
         )
     else:
+        if q.device.type == 'xpu':
+            from matrix_game.inference.xpu import try_attention
+            out = try_attention(
+                q, k, v, q_lens=q_lens, k_lens=k_lens, dropout_p=dropout_p,
+                softmax_scale=softmax_scale, q_scale=q_scale, causal=causal,
+                window_size=window_size)
+            if out is not None:
+                return out
         # 长度等于整段（不补零）时没有遮挡可丢，不报警
         if (q_lens is not None and int(q_lens.min()) < q.size(1)) or \
                 (k_lens is not None and int(k_lens.min()) < k.size(1)):

@@ -32,7 +32,7 @@ Homepage = "https://matrix-game-v4-0.github.io/page/"
 include = ["matrix_game*"]
 
 [tool.setuptools.package-data]
-matrix_game = ["configs/*.json", "web/*.html", "web/*.js", "web/*.LICENSE"]
+matrix_game = ["configs/*.json", "web/*.html", "web/*.js", "web/*.LICENSE", "inference/xpu/csrc/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -8,6 +8,8 @@ as source libraries or external runtime dependencies, not rebranded assets.
 | --- | --- | --- |
 | MG4CF model implementation | `matrix_game/inference/wan`, wrappers, loading, scheduler, decoder, rollout | Apache-2.0; extracted from MG4CF `d5b0307`, based on Wan and Causal Forcing; `licenses/MG4CF-LICENSE` |
 | Wan model/codec code | Same model modules | Original Alibaba/Wan notices retained; project snapshot uses Apache-2.0 |
+| Omni XPU D128 attention wrapper | `matrix_game/inference/xpu/csrc/attention.cpp` | Apache-2.0; adapted from [xiangyuT/llm-scaler](https://github.com/xiangyuT/llm-scaler), revision `42d29535a6dd0e966d2fc10a85985f2c318bb6f4`; isolated namespace and BF16 full-window binding |
+| Intel SYCL-TLA / CUTLASS | External headers for the optional XPU attention build | BSD-3-Clause; NVIDIA Corporation and contributors, Intel adaptations; pinned source and BMG overlay in `matrix_game/inference/xpu/csrc/provenance.json`; `licenses/SYCL-TLA-LICENSE.txt` |
 | TAEHV | `matrix_game/inference/taehv.py` | MIT; Ollin Boer Bohan, [upstream](https://github.com/madebyollin/taehv), commit `011dfc2112197741c540e0bdd5b7b67bcc930771`; `licenses/TAEHV-LICENSE` |
 | MediaMTX reader | `matrix_game/web/mediamtx-reader.js` | MIT; adjacent `mediamtx-reader.LICENSE` |
 | Jolt Physics | `game/third_party/JoltPhysics` | MIT; included `LICENSE` |

@@ -73,6 +73,51 @@ comparisons. For bitwise rollout comparisons, enable Torch deterministic
 algorithms on both sides; ordinary XPU execution can have BF16 run-to-run
 variation that propagates through the rollout.
 
+## Optional SYCL-TLA attention
+
+The XPU runtime can use a separately built SYCL-TLA/CUTE sidecar. It keeps native
+GEMM and the original codec, RoPE, scheduler and clean-KV pass. No ComfyUI or LLM
+application framework is needed. Build inside the same oneAPI/Torch environment
+that will run the model, using a clean Intel SYCL-TLA checkout at
+`2fc09973bfdf15755090fcb0e3b6ad236408a992`:
+
+```bash
+source /opt/intel/oneapi/setvars.sh
+python -m matrix_game.inference.xpu.build \
+  --sycl-tla-root /path/to/sycl-tla \
+  --output /path/to/new-build/matrix_tla.so
+export MATRIX_XPU_TLA_LIBRARY=/path/to/new-build/matrix_tla.so
+export MATRIX_XPU_ATTENTION=tla
+```
+
+The builder does not download sources. It validates pinned header hashes, applies
+the BMG remainder-mask overlay with an exact-once check, and writes a library,
+an adjacent `.so.json` manifest, and a `.so.build` directory containing commands
+and logs. Existing output paths are rejected. Keep the library and its manifest
+together. Torch version/revision, C++ ABI, target and binary hash are checked
+before loading; rebuild after changing the framework environment.
+
+`MATRIX_XPU_ATTENTION=auto` is the default: a configured compatible library enables
+eligible TLA calls; without a library the runtime uses Torch SDPA. `sdpa` forces
+the native route. `tla` requires a valid library when an eligible call is reached.
+An incompatible library in `auto` warns once and falls back. Device execution
+errors propagate. Use a fresh process to change libraries.
+
+The current sidecar targets B70 (`0xE223`) inference with contiguous BF16 BLHD
+tensors, batch one, head dimension 128, query length above 256 and at most 512,
+and a full 21-query-block KV window. This describes the streaming-cache relation
+without fixing a resolution or physical device ordinal. Early cache filling,
+text cross-attention, other layouts/dtypes, causal/local-window requests,
+custom scales, dropout, padding lengths and autograd retain native SDPA.
+Performance evidence is specific to measured shapes; the structural admission
+range is not a performance guarantee for every input.
+
+TLA changes floating-point reductions. Compare full trajectories and generated
+media against `MATRIX_XPU_ATTENTION=sdpa`; bitwise equality is not required for
+this backend. `matrix_game.inference.xpu.backend_status()` reports actual TLA
+and fallback call counts. The default Python dependency set does not build or
+load this optional library implicitly.
+
 ## Checks
 
 The ordinary suite runs without model weights. Device tests require an explicit
