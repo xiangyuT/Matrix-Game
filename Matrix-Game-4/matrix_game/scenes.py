@@ -32,7 +32,8 @@ def add_model_arguments(parser):
     parser.add_argument("--resources", type=Path, default=Path("resources"))
     for key in ("model-dir", "checkpoint", "taehv-path", "asset-root"):
         parser.add_argument("--" + key, type=Path)
-    parser.add_argument("--preset", choices=("realtime", "quality", "baseline") + OPTIMIZED_RUNTIMES, default="realtime")
+    parser.add_argument("--device", choices=("cuda", "xpu"), default="cuda")
+    parser.add_argument("--preset", choices=("realtime", "quality", "baseline", "xpu") + OPTIMIZED_RUNTIMES, default="realtime")
     parser.add_argument("--vae-backend", choices=("wan", "taehv"))
     parser.add_argument("--dit-runtime", choices=("native", "kernels", "cudagraph", "ring", "ring-graph", "ring-fused") + OPTIMIZED_RUNTIMES)
     parser.add_argument("--steps", type=parse_steps)
@@ -41,7 +42,7 @@ def add_model_arguments(parser):
     parser.add_argument("--prompt-mode", choices=("fixed", "dynamic"), default="fixed")
     parser.add_argument("--prompt", help="Override the fixed scene caption")
     parser.add_argument("--prompt-interval-chunks", type=int, default=1)
-    parser.add_argument("--t5-runtime", choices=("native", "graph"), default="graph")
+    parser.add_argument("--t5-runtime", choices=("native", "graph"))
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--sink-image", type=Path)
     group.add_argument("--no-sink-image", action="store_true")
@@ -64,17 +65,21 @@ def resolve_model_arguments(args, require_model=True):
         raise ValueError("Dynamic captions are currently supported for racing only")
     if not 1 <= args.prompt_interval_chunks <= 1024:
         raise ValueError("Prompt interval must be 1..1024 chunks")
-    realtime = args.preset == "realtime" or args.preset in OPTIMIZED_RUNTIMES
+    args.device = "xpu" if args.preset == "xpu" else getattr(args, "device", "cuda")
+    realtime = args.preset in ("realtime", "xpu") or args.preset in OPTIMIZED_RUNTIMES
     if args.preset in OPTIMIZED_RUNTIMES:
         args.dit_runtime = args.dit_runtime or args.preset
     if args.dit_runtime in FIXED_PROMPT_RUNTIMES and args.prompt_mode == "dynamic":
         raise ValueError(f"The {args.dit_runtime} runtime supports fixed prompts only")
     args.vae_backend = args.vae_backend or ("taehv" if realtime else "wan")
-    args.dit_runtime = args.dit_runtime or ("ring-fused" if args.preset == "realtime" else "native")
+    args.dit_runtime = args.dit_runtime or ("ring-fused" if args.preset == "realtime" and args.device == "cuda" else "native")
     args.steps = args.steps or ((1000,) if realtime else (1000, 500))
     args.first_steps = args.first_steps or args.steps
     if args.vae_graph is None:
-        args.vae_graph = realtime and args.vae_backend == "taehv"
+        args.vae_graph = realtime and args.vae_backend == "taehv" and args.device == "cuda"
+    args.t5_runtime = args.t5_runtime or ("graph" if args.device == "cuda" else "native")
+    if args.device == "xpu" and (args.dit_runtime != "native" or args.vae_graph or args.t5_runtime != "native"):
+        raise ValueError("XPU currently requires native DiT/T5 and --no-vae-graph")
     if args.vae_graph and args.vae_backend != "taehv":
         raise ValueError("VAE graph requires TAEHV")
     if require_model:

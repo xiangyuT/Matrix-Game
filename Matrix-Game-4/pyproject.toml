@@ -15,6 +15,9 @@ dependencies = ["numpy>=1.26,<3", "Pillow>=10,<12"]
 
 [project.optional-dependencies]
 inference = ["torch==2.12.0", "torchvision==0.27.0", "diffusers==0.39.0", "transformers==5.17.0", "accelerate==1.15.0", "safetensors==0.8.0", "einops>=0.8", "ftfy>=6", "regex", "sentencepiece>=0.2", "tqdm>=4.66", "imageio-ffmpeg>=0.5"]
+# Install the matching PyTorch XPU / torchvision wheels before this extra.
+# Keep the CUDA inference extra's exact framework pins unchanged.
+xpu = ["torch>=2.12,<2.15", "torchvision>=0.27,<0.30", "diffusers==0.39.0", "transformers==5.17.0", "accelerate==1.15.0", "safetensors==0.8.0", "einops>=0.8", "ftfy>=6", "regex", "sentencepiece>=0.2", "tqdm>=4.66", "imageio-ffmpeg>=0.5"]
 server = ["aiohttp>=3.10,<4"]
 download = ["huggingface-hub>=0.26,<2"]
 test = ["pytest>=8,<10", "aiohttp>=3.10,<4", "imageio-ffmpeg>=0.5"]

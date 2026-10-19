@@ -204,6 +204,8 @@ class WanTextEncoder(torch.nn.Module):
 
     @property
     def device(self):
+        if next(self.text_encoder.parameters()).device.type == "xpu":
+            return next(self.text_encoder.parameters()).device
         # Assume we are always on GPU（无 GPU 时退回参数所在设备，便于 CPU 单元测试）
         if torch.cuda.is_available():
             return torch.cuda.current_device()

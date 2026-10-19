@@ -72,6 +72,8 @@ class CastleStream:
         self.vae_backend, self.profile = vae_backend, profile
         param = next(generator.parameters())
         self.device, self.dtype = param.device, param.dtype
+        from matrix_game.inference.devices import accelerator, prepare_kv_metadata
+        self.accelerator = accelerator(self.device)
         self.shape = (1, 1, 48, 30, 54)
         if sink_latent is not None and (tuple(sink_latent.shape) != self.shape
                                        or not sink_latent.is_floating_point() or not torch.isfinite(sink_latent).all()):
@@ -96,6 +98,7 @@ class CastleStream:
         self.rollout._prepare_rope()
         self.fsl = frame_seq_length_of(generator, 30, 54)
         self.kv, self.xc = self.rollout._caches(1, 21, self.fsl, self.dtype, self.device)
+        prepare_kv_metadata(self.kv, self.device)
         for cache in self.kv:
             cache["k_sink_raw"] = torch.zeros_like(cache["k"][:, :self.fsl])
         self.encoder_features, self.decoder = [], None
@@ -150,7 +153,7 @@ class CastleStream:
             events = []
             def mark():
                 if self.profile:
-                    event = torch.cuda.Event(enable_timing=True)
+                    event = self.accelerator.Event(enable_timing=True)
                     event.record()
                     events.append(event)
             mark()
@@ -214,11 +217,11 @@ class CastleStream:
             rgb = None
             if on_rgb is not None:
                 packed = ((decoded.float().clamp(-1, 1) + 1) * 127.5).round().to(torch.uint8).permute(0, 2, 3, 1).contiguous()
-                if packed.is_cuda:
+                if packed.device.type in ("cuda", "xpu"):
                     # Each publication owns its storage, never a reused graph/pinned buffer.
                     rgb = torch.empty(packed.shape, dtype=torch.uint8, pin_memory=True)
                     rgb.copy_(packed, non_blocking=True)
-                    copied = torch.cuda.Event()
+                    copied = self.accelerator.Event()
                     copied.record()
                     mark()
                     copied.synchronize()
@@ -229,7 +232,7 @@ class CastleStream:
                         # entering it, rather than merely before its final wait.
                         clean()
                         mark()
-                        torch.cuda.current_stream(self.device).synchronize()
+                        self.accelerator.current_stream(self.device).synchronize()
                 else:
                     rgb = packed.cpu()
                     on_rgb(rgb)
@@ -256,8 +259,8 @@ class CastleStream:
     def close(self):
         if self.closed:
             return
-        if self.device.type == "cuda":
-            torch.cuda.synchronize(self.device)
+        if self.accelerator is not None:
+            self.accelerator.synchronize(self.device)
         runtime = getattr(getattr(self.gen, "model", None), "castle_runtime", None)
         if runtime is not None:
             runtime.clear()

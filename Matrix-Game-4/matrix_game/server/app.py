@@ -224,7 +224,7 @@ class Session:
                     with timer.measure("materialize_rgb_ms"):
                         rgb = chunk.rgb.numpy() if early else tensor_to_uint8(chunk.pixels)
                     if profiling:
-                        timer.values.update({"cuda_" + key + "_ms": value for key, value in chunk.timings_ms.items()})
+                        timer.values.update({getattr(self.runtime.args, "device", "cuda") + "_" + key + "_ms": value for key, value in chunk.timings_ms.items()})
                     if not early:
                         publish(rgb)
                 else:
@@ -483,7 +483,7 @@ def main(argv=None):
     parser.add_argument("--reference-only", action="store_true")
     parser.add_argument("--allow-software-rendering", action="store_true", help="Permit slow software OpenGL for correctness tests")
     parser.add_argument("--early-publish", action=argparse.BooleanOptionalAction, default=True, help="Publish RGB before waiting for clean KV")
-    parser.add_argument("--profile-chunks", action="store_true", help="Save bounded per-chunk CPU/CUDA timings on session close")
+    parser.add_argument("--profile-chunks", action="store_true", help="Save bounded per-chunk CPU/accelerator timings on session close")
     parser.add_argument("--reference-pipeline", choices=("serial", "stream"), default="stream",
                         help="Prepare arriving frames in the one-block input worker, or retain serial preprocessing")
     args = parser.parse_args(argv)

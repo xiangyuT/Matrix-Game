@@ -1,4 +1,6 @@
 #include "HeadlessGL.h"
+#include <cstdlib>
+#include <iostream>
 #include <stdexcept>
 #include <string>
 #ifdef CASTLE_HAVE_EGL
@@ -11,12 +13,19 @@ struct HeadlessGL::Impl {
 HeadlessGL::HeadlessGL():impl(std::make_unique<Impl>()){
     auto query=reinterpret_cast<PFNEGLQUERYDEVICESEXTPROC>(eglGetProcAddress("eglQueryDevicesEXT"));
     auto platform=reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(eglGetProcAddress("eglGetPlatformDisplayEXT"));
+    auto deviceString=reinterpret_cast<PFNEGLQUERYDEVICESTRINGEXTPROC>(eglGetProcAddress("eglQueryDeviceStringEXT"));
+    const char* renderNode=std::getenv("MATRIX_EGL_RENDER_NODE");
+    if(renderNode&&!*renderNode)throw std::runtime_error("MATRIX_EGL_RENDER_NODE must name a DRM render node");
+    if(renderNode&&!deviceString)throw std::runtime_error("EGL render-node selection requires eglQueryDeviceStringEXT");
     if(!query||!platform)throw std::runtime_error("EGL device extensions unavailable");
     EGLDeviceEXT devices[16];EGLint count=0;if(!query(16,devices,&count))throw std::runtime_error("Cannot enumerate EGL devices");
-    for(int i=0;i<count;++i){auto display=platform(EGL_PLATFORM_DEVICE_EXT,devices[i],nullptr);if(display==EGL_NO_DISPLAY)continue;
-        if(eglInitialize(display,nullptr,nullptr)){impl->display=display;break;}
+    for(int i=0;i<count;++i){
+        const char* node=deviceString?deviceString(devices[i],EGL_DRM_RENDER_NODE_FILE_EXT):nullptr;
+        if(renderNode&&(!node||std::string(node)!=renderNode))continue;
+        auto display=platform(EGL_PLATFORM_DEVICE_EXT,devices[i],nullptr);if(display==EGL_NO_DISPLAY)continue;
+        if(eglInitialize(display,nullptr,nullptr)){impl->display=display;std::cerr<<"EGL render node: "<<(node?node:"unavailable")<<std::endl;break;}
     }
-    if(impl->display==EGL_NO_DISPLAY)throw std::runtime_error("No EGL device initialized; verify matching graphics libraries and device access");
+    if(impl->display==EGL_NO_DISPLAY)throw std::runtime_error(renderNode?std::string("Cannot initialize selected EGL render node: ")+renderNode:"No EGL device initialized; verify matching graphics libraries and device access");
     if(!eglBindAPI(EGL_OPENGL_API))throw std::runtime_error("EGL desktop OpenGL unavailable");
     const EGLint configAttributes[]={EGL_SURFACE_TYPE,EGL_PBUFFER_BIT,EGL_RENDERABLE_TYPE,EGL_OPENGL_BIT,EGL_RED_SIZE,8,EGL_GREEN_SIZE,8,EGL_BLUE_SIZE,8,EGL_ALPHA_SIZE,8,EGL_DEPTH_SIZE,24,EGL_NONE};
     EGLConfig config;EGLint configs=0;if(!eglChooseConfig(impl->display,configAttributes,&config,1,&configs)||!configs)throw std::runtime_error("No EGL OpenGL config");

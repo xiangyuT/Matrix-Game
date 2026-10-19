@@ -19,11 +19,16 @@ class ModelComponents:
         from matrix_game.inference.loading import build_dit
         from matrix_game.inference.wrappers import WanVAE22Wrapper
         from matrix_game.inference.wan.modules.attention import FLASH_ATTN_2_AVAILABLE, FLASH_ATTN_3_AVAILABLE
+        from matrix_game.inference.devices import inference_device, empty_cache
         torch.set_num_threads(8)
         torch.backends.cuda.matmul.allow_tf32 = False
         torch.backends.cudnn.allow_tf32 = False
-        self.attention_backend = "fa3" if FLASH_ATTN_3_AVAILABLE else ("fa2" if FLASH_ATTN_2_AVAILABLE else "sdpa")
-        device, dtype = torch.device("cuda"), torch.bfloat16
+        device, dtype = inference_device(getattr(self.args, "device", "cuda")), torch.bfloat16
+        self.attention_backend = "sdpa" if device.type == "xpu" else ("fa3" if FLASH_ATTN_3_AVAILABLE else ("fa2" if FLASH_ATTN_2_AVAILABLE else "sdpa"))
+        if device.type == "xpu" and self.args.prompt_mode == "fixed":
+            # Encode on XPU before loading DiT, avoiding simultaneous residency
+            # of the full BF16 umT5 and the diffusion model on a 32 GB card.
+            self.prompt = self._encode_fixed_prompt(device, dtype)
         if self.args.dit_runtime.startswith("rtx5080"):
             # encode the fixed prompt and free T5.
             self.prompt = self._encode_fixed_prompt(device, dtype)
@@ -52,7 +57,7 @@ class ModelComponents:
                 self.prompt = self.caption_encoder(self.args.prompt)
                 del text
                 gc.collect()
-                torch.cuda.empty_cache()
+                empty_cache(device)
             else:
                 self.prompt = self._encode_fixed_prompt(device, dtype)
         if self.args.vae_backend == "wan":
@@ -90,7 +95,8 @@ class ModelComponents:
             prompt = text(text_prompts=[self.args.prompt])["prompt_embeds"].to(dtype)
         del text
         gc.collect()
-        torch.cuda.empty_cache()
+        from matrix_game.inference.devices import empty_cache
+        empty_cache(device)
         return prompt
 
     def _runtime(self):
@@ -110,6 +116,7 @@ class ModelComponents:
 
     def config(self):
         return dict(scene=self.args.scene, scene_name=SCENES[self.args.scene]["name"],
+                    device=getattr(self.args, "device", "cuda"),
                     checkpoint=self.args.checkpoint.name, ckpt_keys=["generator_ema"],
                     vae_backend=self.args.vae_backend, steps=list(self.args.steps),
                     first_steps=list(self.args.first_steps), sink_rope_mode=self.args.sink_rope_mode,

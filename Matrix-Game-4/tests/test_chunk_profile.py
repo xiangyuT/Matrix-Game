@@ -4,6 +4,9 @@ import unittest
 from unittest.mock import patch
 
 import numpy as np
+# Load the C extension outside patch.dict: restoring sys.modules must not unload
+# torch and then attempt to initialize its extension again in the next case.
+import torch
 
 from matrix_game.profiling import ChunkTimer, summarize
 from matrix_game.server.app import Session

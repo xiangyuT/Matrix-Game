@@ -56,6 +56,9 @@ driver. A separate FlashAttention installation is optional. The `rtx5090`,
 variants require the additional [SageAttention build](#optional-sageattention).
 See [installation](docs/installation.md) for native and media dependencies.
 
+For the Intel XPU development runtime, see [XPU setup and usage](docs/xpu.md).
+It uses the separate `xpu` dependency extra and `--preset xpu`.
+
 ## Resources
 
 Keep downloads outside Git, using this layout by default:

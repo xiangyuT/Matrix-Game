@@ -31,4 +31,4 @@ def summarize(rows, warmup_chunks=25):
     return dict(chunks=len(selected), warmup_chunks=warmup_chunks, stages=stats,
                 note='Nested timings are not additive: publication is inside stream_wall for early publish. '
                      'Background preprocessing/native capture overlap the producer and must not be added to its cycle. '
-                     'CUDA event intervals include host launch gaps; clean_kv includes the publish callback.')
+                     'Accelerator event intervals include host launch gaps; clean_kv includes the publish callback.')
